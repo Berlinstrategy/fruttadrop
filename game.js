@@ -32,6 +32,7 @@ class GameScene extends Phaser.Scene {
 
   create() {
     this.fruits = [];
+    this.mergeQueue = [];
     this.score = 0;
     this.highScore = parseInt(localStorage.getItem('fruttadrop_hi') || '0', 10);
     this.gameOver = false;
@@ -327,10 +328,15 @@ class GameScene extends Phaser.Scene {
   removeFruit(sprite) {
     const idx = this.fruits.findIndex(f => f.sprite === sprite);
     if (idx >= 0) {
-      this.fruits[idx].emoji.destroy();
+      const emoji = this.fruits[idx].emoji;
+      if (emoji && emoji.active) {
+        try { emoji.destroy(); } catch (e) {}
+      }
       this.fruits.splice(idx, 1);
     }
-    if (sprite && sprite.body) sprite.destroy();
+    if (sprite && sprite.active) {
+      try { sprite.destroy(); } catch (e) {}
+    }
   }
 
   // ----------------------------------------------------------
@@ -342,7 +348,7 @@ class GameScene extends Phaser.Scene {
       event.pairs.forEach(pair => {
         const a = pair.bodyA;
         const b = pair.bodyB;
-        if (!a.gameObject || !b.gameObject) return;
+        if (!a || !b || !a.gameObject || !b.gameObject) return;
         const sa = a.gameObject;
         const sb = b.gameObject;
         if (!sa.getData || !sb.getData) return;
@@ -350,38 +356,43 @@ class GameScene extends Phaser.Scene {
         const ta = sa.getData('tier');
         const tb = sb.getData('tier');
         if (ta === undefined || tb === undefined) return;
-        if (ta === tb && ta < TIERS.length - 1) {
+        if (ta === tb) {
+          // Mark + defer: NEVER mutate Matter world inside a collision callback.
           sa.setData('merged', true);
           sb.setData('merged', true);
-          const mx = (sa.x + sb.x) / 2;
-          const my = (sa.y + sb.y) / 2;
-          this.mergeFruits(sa, sb, mx, my, ta + 1);
-        } else if (ta === tb && ta === TIERS.length - 1) {
-          // Two watermelons! Special celebration
-          sa.setData('merged', true);
-          sb.setData('merged', true);
-          const mx = (sa.x + sb.x) / 2;
-          const my = (sa.y + sb.y) / 2;
-          this.removeFruit(sa);
-          this.removeFruit(sb);
-          this.updateScore(500);
-          this.spawnParticles(mx, my, 0x2ecc71, 24);
-          this.playMergeSound(TIERS.length);
-          this.flashScreen(0x2ecc71);
+          this.mergeQueue.push({ sa, sb, ta });
         }
       });
     });
   }
 
-  mergeFruits(spriteA, spriteB, x, y, newTier) {
-    this.updateScore(TIERS[newTier].score);
-    this.spawnParticles(x, y, TIERS[newTier].color, 10);
-    this.playMergeSound(newTier);
-    this.removeFruit(spriteA);
-    this.removeFruit(spriteB);
-    this.spawnFruit(x, y, newTier);
-    // tiny screen pulse
-    this.cameras.main.shake(60, 0.0015);
+  processMergeQueue() {
+    if (this.mergeQueue.length === 0) return;
+    const items = this.mergeQueue;
+    this.mergeQueue = [];
+    for (const { sa, sb, ta } of items) {
+      if (!sa || !sb || !sa.active || !sb.active) continue;
+      const mx = (sa.x + sb.x) / 2;
+      const my = (sa.y + sb.y) / 2;
+      if (ta < TIERS.length - 1) {
+        const newTier = ta + 1;
+        this.updateScore(TIERS[newTier].score);
+        this.spawnParticles(mx, my, TIERS[newTier].color, 10);
+        this.playMergeSound(newTier);
+        this.removeFruit(sa);
+        this.removeFruit(sb);
+        this.spawnFruit(mx, my, newTier);
+        this.cameras.main.shake(60, 0.0015);
+      } else {
+        // anguria + anguria
+        this.removeFruit(sa);
+        this.removeFruit(sb);
+        this.updateScore(500);
+        this.spawnParticles(mx, my, 0x2ecc71, 24);
+        this.playMergeSound(TIERS.length);
+        this.flashScreen(0x2ecc71);
+      }
+    }
   }
 
   // ----------------------------------------------------------
@@ -464,9 +475,12 @@ class GameScene extends Phaser.Scene {
   // Update loop
   // ----------------------------------------------------------
   update(time, delta) {
-    // sync emoji positions
+    // Process queued merges OUTSIDE of Matter's collision callback to avoid corrupting world state.
+    this.processMergeQueue();
+
+    // sync emoji positions to physics bodies
     this.fruits.forEach(f => {
-      if (f.sprite && f.sprite.body) {
+      if (f.sprite && f.sprite.body && f.emoji && f.emoji.active) {
         f.emoji.x = f.sprite.x;
         f.emoji.y = f.sprite.y;
         f.emoji.rotation = f.sprite.rotation;
