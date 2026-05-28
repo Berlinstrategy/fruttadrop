@@ -61,31 +61,42 @@ class GameScene extends Phaser.Scene {
   // Textures
   // ----------------------------------------------------------
   buildTextures() {
+    // Bake circle + emoji into a single canvas per tier (no separate Text objects at runtime).
     TIERS.forEach((tier, i) => {
       const r = tier.radius;
       const pad = 4;
       const size = (r + pad) * 2;
       const cx = size / 2;
-      const g = this.make.graphics({ x: 0, y: 0, add: false });
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
 
-      // soft drop shadow
-      g.fillStyle(0x000000, 0.22);
-      g.fillCircle(cx, cx + 3, r);
+      // drop shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath(); ctx.arc(cx, cx + 3, r, 0, Math.PI * 2); ctx.fill();
 
-      // main body
-      g.fillStyle(tier.color, 1);
-      g.fillCircle(cx, cx, r);
+      // body
+      ctx.fillStyle = '#' + tier.color.toString(16).padStart(6, '0');
+      ctx.beginPath(); ctx.arc(cx, cx, r, 0, Math.PI * 2); ctx.fill();
 
-      // inner sheen
-      g.fillStyle(0xffffff, 0.28);
-      g.fillCircle(cx - r * 0.32, cx - r * 0.32, r * 0.42);
+      // sheen
+      ctx.fillStyle = 'rgba(255,255,255,0.28)';
+      ctx.beginPath(); ctx.arc(cx - r * 0.32, cx - r * 0.32, r * 0.42, 0, Math.PI * 2); ctx.fill();
 
       // rim
-      g.lineStyle(2, 0x000000, 0.2);
-      g.strokeCircle(cx, cx, r);
+      ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cx, r, 0, Math.PI * 2); ctx.stroke();
 
-      g.generateTexture(`fruit_${i}`, size, size);
-      g.destroy();
+      // emoji baked into texture (drawn ONCE, never per-fruit at runtime)
+      ctx.font = `${Math.floor(r * 1.15)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tier.emoji, cx, cx + 1);
+
+      if (this.textures.exists(`fruit_${i}`)) this.textures.remove(`fruit_${i}`);
+      this.textures.addCanvas(`fruit_${i}`, canvas);
     });
 
     // particle texture
@@ -179,10 +190,6 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5, 0);
 
     this.nextIcon = this.add.image(W / 2, 40, 'fruit_0').setScale(0.5);
-    this.nextEmoji = this.add.text(W / 2, 40, '🍒', {
-      fontSize: '18px',
-      fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif'
-    }).setOrigin(0.5);
   }
 
   updateScore(delta) {
@@ -207,8 +214,6 @@ class GameScene extends Phaser.Scene {
     this.nextIcon.setTexture(`fruit_${this.nextTier}`);
     const targetScale = 36 / ((tier.radius + 4) * 2);
     this.nextIcon.setScale(targetScale);
-    this.nextEmoji.setText(tier.emoji);
-    this.nextEmoji.setFontSize(Math.max(16, Math.floor(tier.radius * 0.9)));
   }
 
   // ----------------------------------------------------------
@@ -217,20 +222,12 @@ class GameScene extends Phaser.Scene {
   makePreview() {
     this.previewSprite = this.add.image(W / 2, DROP_Y, `fruit_${this.currentTier}`)
       .setAlpha(0.85);
-    this.previewEmoji = this.add.text(W / 2, DROP_Y, TIERS[this.currentTier].emoji, {
-      fontSize: `${Math.floor(TIERS[this.currentTier].radius * 1.05)}px`,
-      fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif'
-    }).setOrigin(0.5).setAlpha(0.85);
     this.dropX = W / 2;
   }
 
   updatePreview() {
-    const tier = TIERS[this.currentTier];
     this.previewSprite.setTexture(`fruit_${this.currentTier}`);
-    this.previewEmoji.setText(tier.emoji);
-    this.previewEmoji.setFontSize(Math.floor(tier.radius * 1.05));
     this.previewSprite.setAlpha(0.85);
-    this.previewEmoji.setAlpha(0.85);
   }
 
   movePreview(x) {
@@ -239,7 +236,6 @@ class GameScene extends Phaser.Scene {
     const maxX = W - WALL - tier.radius - 2;
     this.dropX = Phaser.Math.Clamp(x, minX, maxX);
     this.previewSprite.x = this.dropX;
-    this.previewEmoji.x = this.dropX;
   }
 
   // ----------------------------------------------------------
@@ -275,7 +271,6 @@ class GameScene extends Phaser.Scene {
   dropFruit() {
     this.canDrop = false;
     this.previewSprite.setAlpha(0);
-    this.previewEmoji.setAlpha(0);
     this.spawnFruit(this.dropX, DROP_Y, this.currentTier);
     this.currentTier = this.nextTier;
     this.nextTier = this.randomSpawnTier();
@@ -285,7 +280,6 @@ class GameScene extends Phaser.Scene {
       this.canDrop = true;
       if (!this.gameOver) {
         this.previewSprite.setAlpha(0.85);
-        this.previewEmoji.setAlpha(0.85);
       }
     });
   }
@@ -304,18 +298,11 @@ class GameScene extends Phaser.Scene {
     sprite.setData('merged', false);
     sprite.setData('birthTime', this.time.now);
 
-    const emoji = this.add.text(x, y, tier.emoji, {
-      fontSize: `${Math.floor(tier.radius * 1.05)}px`,
-      fontFamily: 'Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif'
-    }).setOrigin(0.5);
+    this.fruits.push({ sprite, tierIdx });
 
-    this.fruits.push({ sprite, emoji, tierIdx });
-
-    // pop in
     sprite.setScale(0.7);
-    emoji.setScale(0.7);
     this.tweens.add({
-      targets: [sprite, emoji],
+      targets: sprite,
       scale: 1,
       duration: 180,
       ease: 'Back.Out'
@@ -327,13 +314,7 @@ class GameScene extends Phaser.Scene {
 
   removeFruit(sprite) {
     const idx = this.fruits.findIndex(f => f.sprite === sprite);
-    if (idx >= 0) {
-      const emoji = this.fruits[idx].emoji;
-      if (emoji && emoji.active) {
-        try { emoji.destroy(); } catch (e) {}
-      }
-      this.fruits.splice(idx, 1);
-    }
+    if (idx >= 0) this.fruits.splice(idx, 1);
     if (sprite && sprite.active) {
       try { sprite.destroy(); } catch (e) {}
     }
@@ -478,15 +459,6 @@ class GameScene extends Phaser.Scene {
     // Process queued merges OUTSIDE of Matter's collision callback to avoid corrupting world state.
     this.processMergeQueue();
 
-    // sync emoji positions to physics bodies
-    this.fruits.forEach(f => {
-      if (f.sprite && f.sprite.body && f.emoji && f.emoji.active) {
-        f.emoji.x = f.sprite.x;
-        f.emoji.y = f.sprite.y;
-        f.emoji.rotation = f.sprite.rotation;
-      }
-    });
-
     if (this.gameOver) return;
 
     // danger detection: any resting fruit above danger line
@@ -522,7 +494,6 @@ class GameScene extends Phaser.Scene {
     this.gameOver = true;
     this.canDrop = false;
     this.previewSprite.setAlpha(0);
-    this.previewEmoji.setAlpha(0);
     this.playGameOverSound();
     this.cameras.main.shake(300, 0.01);
 
@@ -630,7 +601,7 @@ const config = {
     default: 'matter',
     matter: {
       gravity: { y: 1.0 },
-      enableSleeping: true,
+      enableSleeping: false,
       debug: false
     }
   },
