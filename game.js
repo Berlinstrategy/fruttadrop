@@ -316,6 +316,9 @@ class GameScene extends Phaser.Scene {
     const idx = this.fruits.findIndex(f => f.sprite === sprite);
     if (idx >= 0) this.fruits.splice(idx, 1);
     if (sprite && sprite.active) {
+      // Kill the pop-in scale tween before destroying — otherwise the tween keeps
+      // calling setScale on a sprite with a null Matter body, throwing on every frame.
+      try { this.tweens.killTweensOf(sprite); } catch (e) {}
       try { sprite.destroy(); } catch (e) {}
     }
   }
